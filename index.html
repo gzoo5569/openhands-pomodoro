@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>番茄钟</title>
+<style>
+  :root {
+    --focus: #e8503a;
+    --break: #2f9e6e;
+    --bg: #1f2430;
+    --card: #2b3242;
+    --text: #f2f4f8;
+    --muted: #9aa4b8;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "PingFang SC", "Microsoft YaHei", "Hiragino Sans GB", sans-serif;
+    padding: 20px;
+    transition: background 0.3s;
+  }
+
+  body.is-break { background: #17251f; }
+
+  .app {
+    width: 100%;
+    max-width: 380px;
+    background: var(--card);
+    border-radius: 20px;
+    padding: 32px 28px;
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.35);
+    text-align: center;
+  }
+
+  .mode {
+    display: inline-block;
+    font-size: 15px;
+    letter-spacing: 2px;
+    padding: 6px 18px;
+    border-radius: 999px;
+    background: rgba(232, 80, 58, 0.18);
+    color: var(--focus);
+    margin-bottom: 22px;
+    transition: background 0.3s, color 0.3s;
+  }
+
+  .mode.break {
+    background: rgba(47, 158, 110, 0.18);
+    color: var(--break);
+  }
+
+  .time {
+    font-size: 84px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+    letter-spacing: 2px;
+  }
+
+  .controls {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    margin: 28px 0 24px;
+  }
+
+  button {
+    font-family: inherit;
+    font-size: 16px;
+    padding: 12px 26px;
+    border: none;
+    border-radius: 12px;
+    cursor: pointer;
+    color: #fff;
+    background: var(--focus);
+    transition: filter 0.2s, transform 0.1s;
+  }
+
+  button.secondary {
+    background: #3d465c;
+  }
+
+  button:hover { filter: brightness(1.1); }
+  button:active { transform: scale(0.96); }
+  button:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+    filter: none;
+    transform: none;
+  }
+
+  .stats {
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    padding-top: 20px;
+    color: var(--muted);
+    font-size: 14px;
+  }
+
+  .stats strong {
+    color: var(--text);
+    font-size: 22px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .dots {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    justify-content: center;
+    margin-top: 12px;
+    min-height: 12px;
+  }
+
+  .dot {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--focus);
+  }
+</style>
+</head>
+<body>
+  <main class="app">
+    <div class="mode" id="mode">专注中</div>
+    <div class="time" id="time">25:00</div>
+
+    <div class="controls">
+      <button id="startBtn">开始</button>
+      <button id="pauseBtn" class="secondary" disabled>暂停</button>
+      <button id="resetBtn" class="secondary">重置</button>
+    </div>
+
+    <div class="stats">
+      <div>今天完成 <strong id="count">0</strong> 个番茄</div>
+      <div class="dots" id="dots"></div>
+    </div>
+  </main>
+
+<script>
+(function () {
+  var FOCUS_SECONDS = 25 * 60;
+  var BREAK_SECONDS = 5 * 60;
+  var STORAGE_KEY = "pomodoro.daily";
+
+  var timeEl = document.getElementById("time");
+  var modeEl = document.getElementById("mode");
+  var startBtn = document.getElementById("startBtn");
+  var pauseBtn = document.getElementById("pauseBtn");
+  var resetBtn = document.getElementById("resetBtn");
+  var countEl = document.getElementById("count");
+  var dotsEl = document.getElementById("dots");
+
+  var isBreak = false;
+  var remaining = FOCUS_SECONDS;
+  var timerId = null;
+
+  function todayKey() {
+    var d = new Date();
+    var m = String(d.getMonth() + 1).padStart(2, "0");
+    var day = String(d.getDate()).padStart(2, "0");
+    return d.getFullYear() + "-" + m + "-" + day;
+  }
+
+  function loadCount() {
+    try {
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if (!raw) return 0;
+      var data = JSON.parse(raw);
+      return data.date === todayKey() ? data.count : 0;
+    } catch (e) {
+      return 0;
+    }
+  }
+
+  function saveCount(count) {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ date: todayKey(), count: count }));
+    } catch (e) {
+      /* 本地存储不可用时静默忽略，计时功能不受影响 */
+    }
+  }
+
+  function renderCount() {
+    var count = loadCount();
+    countEl.textContent = count;
+    dotsEl.innerHTML = "";
+    for (var i = 0; i < count; i++) {
+      var dot = document.createElement("span");
+      dot.className = "dot";
+      dotsEl.appendChild(dot);
+    }
+  }
+
+  function formatTime(seconds) {
+    var m = Math.floor(seconds / 60);
+    var s = seconds % 60;
+    return String(m).padStart(2, "0") + ":" + String(s).padStart(2, "0");
+  }
+
+  function render() {
+    timeEl.textContent = formatTime(remaining);
+    modeEl.textContent = isBreak ? "休息中" : "专注中";
+    modeEl.className = isBreak ? "mode break" : "mode";
+    document.body.className = isBreak ? "is-break" : "";
+    document.title = formatTime(remaining) + (isBreak ? " · 休息" : " · 专注");
+  }
+
+  function beep() {
+    var AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    var ctx = new AudioCtx();
+    var notes = [880, 660, 880];
+    notes.forEach(function (freq, i) {
+      var osc = ctx.createOscillator();
+      var gain = ctx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = freq;
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      var startAt = ctx.currentTime + i * 0.3;
+      gain.gain.setValueAtTime(0.0001, startAt);
+      gain.gain.exponentialRampToValueAtTime(0.3, startAt + 0.02);
+      gain.gain.exponentialRampToValueAtTime(0.0001, startAt + 0.25);
+      osc.start(startAt);
+      osc.stop(startAt + 0.28);
+    });
+    setTimeout(function () { ctx.close(); }, notes.length * 300 + 400);
+  }
+
+  function tick() {
+    remaining--;
+    if (remaining > 0) {
+      render();
+      return;
+    }
+    clearInterval(timerId);
+    timerId = null;
+    beep();
+    if (isBreak) {
+      isBreak = false;
+      remaining = FOCUS_SECONDS;
+      alert("休息结束，开始专注吧！");
+    } else {
+      saveCount(loadCount() + 1);
+      renderCount();
+      isBreak = true;
+      remaining = BREAK_SECONDS;
+      alert("专注完成，休息 5 分钟！");
+    }
+    render();
+    startTimer();
+  }
+
+  function startTimer() {
+    if (timerId !== null) return;
+    timerId = setInterval(tick, 1000);
+    startBtn.disabled = true;
+    pauseBtn.disabled = false;
+  }
+
+  function stopTimer() {
+    if (timerId !== null) {
+      clearInterval(timerId);
+      timerId = null;
+    }
+    startBtn.disabled = false;
+    pauseBtn.disabled = true;
+  }
+
+  function resetTimer() {
+    stopTimer();
+    isBreak = false;
+    remaining = FOCUS_SECONDS;
+    render();
+  }
+
+  startBtn.addEventListener("click", startTimer);
+  pauseBtn.addEventListener("click", stopTimer);
+  resetBtn.addEventListener("click", resetTimer);
+
+  render();
+  renderCount();
+})();
+</script>
+</body>
+</html>
